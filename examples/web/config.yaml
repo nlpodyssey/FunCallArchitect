@@ -1,0 +1,8 @@
+company_name_prefix: ""
+company_name_suffix: "FunCallArchitect"
+company_suffix_color: "#45a049"
+product_name: "Eolo"
+environment_name: "Terminal"
+product_accent_color: "#45a049"
+favicon_path: "/favicon"
+initial_question: "What's the weather like in Turin?"

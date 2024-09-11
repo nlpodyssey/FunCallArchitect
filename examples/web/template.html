@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.CompanyNamePrefix}}{{.CompanyNameSuffix}} - {{.ProductName}} | {{.EnvironmentName}}</title>
+    <link rel="icon" type="image/x-icon" href="{{.FaviconPath}}">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=Source+Code+Pro:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --product-accent-color: {{.ProductAccentColor}};
+            --product-accent-color-dark: color-mix(in srgb, var(--product-accent-color) 85%, black);
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background-color: #0f0f0f;
+            color: #b8b8b8;
+            font-family: 'Roboto Mono', 'Source Code Pro', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow: hidden;
+        }
+
+        #terminal {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            max-width: 1200px;
+            margin: 0 auto;
+            border: 1px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        #header {
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            font-size: 14px;
+            color: #d0d0d0;
+            font-weight: 500;
+            background-color: #1a1a1a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #header .company-suffix {
+            color: {{.CompanySuffixColor}};
+        }
+
+        #header .product-name {
+            color: inherit;
+        }
+
+        .accent-color {
+            color: var(--product-accent-color);
+        }
+
+        .accent-color-dark {
+            color: var(--product-accent-color-dark);
+        }
+
+        #content-wrapper {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background-color: #121212;
+        }
+
+        #main-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 15px;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        #output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .user-message {
+            color: #e0e0e0;
+            background-color: #1e1e1e;
+            border-left: 3px solid var(--product-accent-color);
+        }
+
+        .event-line {
+            margin-bottom: 5px;
+            padding: 3px 10px;
+        }
+
+        .event-line.func-calls {
+            display: none;
+            background-color: rgba(0, 114, 178, 0.1);
+            border-left: 3px solid #0072B2;
+            padding: 5px 10px;
+            margin: 5px 0;
+            color: #a8a8a8;
+        }
+
+        .timestamp {
+            color: #556667;
+        }
+
+        #bottom-container {
+            background-color: #1a1a1a;
+            border-top: 1px solid #333;
+            padding: 15px;
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        #data-stream {
+            padding: 10px 0;
+            min-height: 20px;
+            font-size: 13px;
+            color: var(--product-accent-color);
+        }
+
+        #command-line {
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 10px;
+            margin-bottom: 40px;
+            padding: 10px 0;
+            position: relative;
+        }
+
+        #prompt {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            padding-right: 10px;
+            font-size: 20px;
+            line-height: 24px;
+            color: #b8b8b8;
+            transition: color 0.3s ease;
+            pointer-events: none;
+        }
+
+        #message {
+            flex-grow: 1;
+            background-color: transparent;
+            border: none;
+            outline: none;
+            resize: none;
+            overflow: auto;
+            min-height: 24px;
+            max-height: 150px;
+            font-size: 14px;
+            line-height: 24px;
+            color: #b8b8b8;
+            font-family: inherit;
+            padding-left: 20px;
+        }
+
+        #submit-indicator {
+            color: #556667;
+            font-size: 13px;
+            padding: 10px 0 0;
+            display: none;
+            margin-bottom: 25px;
+        }
+
+        #toggle-func-calls {
+            background-color: rgba(0, 114, 178, 0.1);
+            color: #0072B2;
+            border: none;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            border-radius: 4px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        #toggle-func-calls:hover {
+            background-color: rgba(0, 114, 178, 0.2);
+        }
+
+        #toggle-func-calls:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(0, 114, 178, 0.3);
+        }
+
+        @keyframes dots {
+            0% { content: '.'; }
+            33% { content: '..'; }
+            66% { content: '...'; }
+            100% { content: ''; }
+        }
+
+        #data-stream.animate-dots::after {
+            content: '';
+            animation: dots 1.5s infinite steps(4);
+            display: inline-block;
+            width: 30px;
+            text-align: left;
+        }
+
+        ::-webkit-scrollbar {width: 10px;}
+        ::-webkit-scrollbar-track {background: #1a1a1a;}
+        ::-webkit-scrollbar-thumb {background: #333; border-radius: 5px;}
+        ::-webkit-scrollbar-thumb:hover {background: #444;}
+
+        /* Markdown styles */
+        .event-line * {
+            margin: 0;
+            padding: 0;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+        }
+
+        .event-line p {
+            display: inline;
+        }
+
+        .event-line code {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 1px 3px;
+            border-radius: 3px;
+        }
+
+        .event-line pre {
+            background-color: rgba(255, 255, 255, 0.05);
+            padding: 5px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+
+        .event-line a {
+            color: var(--product-accent-color-dark);
+            text-decoration: none;
+        }
+
+        .event-line a:hover {
+            text-decoration: none;
+        }
+
+        .section-separator {
+            border: none;
+            height: 1px;
+            background-color: #2a2a2a;
+            margin: 10px 0;
+        }
+
+        .suggestion-link {
+            display: inline-flex;
+            align-items: center;
+            color: var(--product-accent-color-dark);
+            text-decoration: none;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background-color 0.2s, color 0.2s;
+            cursor: pointer;
+        }
+        .suggestion-link:hover {
+            background-color: #2a2a2a;
+            color: #ffffff;
+        }
+        .suggestion-icon {
+            color: var(--product-accent-color);
+            margin-right: 6px;
+            font-size: 10px;
+        }
+    </style>
+</head>
+<body>
+<div id="terminal">
+    <div id="header">
+        <span>{{.CompanyNamePrefix}}<span class="company-suffix">{{.CompanyNameSuffix}}</span> <span class="product-name">{{.ProductName}}</span> | {{.EnvironmentName}}</span>
+        <button id="toggle-func-calls">Show Func Calls</button>
+    </div>
+    <div id="content-wrapper">
+        <div id="main-content">
+            <div id="output"></div>
+        </div>
+        <div id="bottom-container">
+            <div id="data-stream"></div>
+            <form id="command-form" onsubmit="return submitForm()">
+                <div id="command-line">
+                    <span id="prompt">»</span>
+                    <textarea id="message" rows="1" placeholder="Enter your message...">{{.InitialQuestion}}</textarea>
+                </div>
+            </form>
+            <div id="submit-indicator">Press Ctrl+Enter to submit</div>
+        </div>
+    </div>
+</div>
+<script>
+    let isFuncCallsVisible = false;
+
+    function scrollToBottom() {
+        const mainContent = document.getElementById('main-content');
+        mainContent.scrollTop = mainContent.scrollHeight;
+    }
+
+    function updatePromptColor() {
+        const message = document.getElementById('message');
+        const prompt = document.getElementById('prompt');
+        prompt.style.color = message === document.activeElement ? 'var(--product-accent-color)' : '#b8b8b8';
+    }
+
+    document.getElementById('message').addEventListener('focus', updatePromptColor);
+    document.getElementById('message').addEventListener('blur', updatePromptColor);
+
+    const dataStream = document.getElementById('data-stream');
+
+    function submitForm() {
+        const messageElement = document.getElementById('message');
+        const message = messageElement.value.trim();
+
+        if (message === '') {
+            return false;
+        }
+
+        const output = document.getElementById('output');
+        let timestamp = new Date().toLocaleTimeString();
+        output.innerHTML += `<div class="event-line user-message"><span class="timestamp">[${timestamp}]</span> ${message}</div>`;
+        scrollToBottom();
+
+        fetch('/process', {
+            method: 'POST',
+            body: message,
+            headers: {
+                'Content-Type': 'text/plain',
+                'Accept': 'text/event-stream'
+            }
+        }).then(response => {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let currentEvent = '';
+            let currentData = '';
+
+            function read() {
+                reader.read().then(({done, value}) => {
+                    if (done) {
+                        processEvent(currentEvent, currentData);
+                        updateDataStream('');
+                        return;
+                    }
+                    const chunk = decoder.decode(value);
+                    buffer += chunk;
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    lines.forEach(line => {
+                        if (line.startsWith('event:')) {
+                            processEvent(currentEvent, currentData);
+                            currentEvent = line.slice(6).trim();
+                            currentData = '';
+                        } else if (line.startsWith('data:')) {
+                            currentData += line.slice(5).trim();
+                        } else if (line === '') {
+                            processEvent(currentEvent, currentData);
+                            currentEvent = '';
+                            currentData = '';
+                        }
+                    });
+                    read();
+                }).catch(error => {
+                    console.error('Error reading stream:', error);
+                    updateDataStream(`Error reading stream: ${error.message}`);
+                });
+            }
+
+            read();
+        }).catch(error => {
+            console.error('Fetch error:', error);
+            updateDataStream(`Fetch error: ${error.message}`);
+        });
+
+        messageElement.value = '';
+        messageElement.style.height = 'auto';
+        updateSubmitIndicator();
+
+        return false;
+    }
+
+    function processEvent(eventType, eventData) {
+        if (!eventType || !eventData) return;
+
+        let data;
+        try {
+            data = JSON.parse(eventData);
+        } catch (error) {
+            console.error('Error parsing JSON:', error);
+            return;
+        }
+
+        console.log('Event:', eventType, 'Data:', data);
+
+        const message = data.message;
+        if (!message) {
+            console.error('No message field in event data');
+            return;
+        }
+
+        const timestamp = new Date().toLocaleTimeString();
+
+        switch (eventType) {
+            case 'log':
+                updateDataStream(message.trim());
+                break;
+            case 'error':
+                appendToOutput(timestamp, `Error: ${message}`, 'error');
+                break;
+            case 'result':
+                if (typeof message === 'object') {
+                    if (message.func_calls) {
+                        appendToOutput(timestamp, message.func_calls, 'func_calls');
+                    }
+                    if (message.output) {
+                        appendToOutput(timestamp, message.output, 'response');
+                    }
+                } else {
+                    console.error('Result message is not an object:', message);
+                }
+                break;
+            default:
+                console.warn('Unknown event type:', eventType);
+                break;
+        }
+    }
+
+    function appendToOutput(timestamp, data, type = 'response') {
+        console.log('Data:', data);
+        const output = document.getElementById('output');
+        const parsedMarkdown = simpleMarkdownParse(data.trim());
+        let className = 'event-line';
+
+        if (type === 'func_calls') {
+            className += ' func-calls';
+        } else if (type === 'error') {
+            className += ' error-message';
+        }
+
+        const newElement = document.createElement('div');
+        newElement.className = className;
+        newElement.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${parsedMarkdown}`;
+
+        if (type === 'func_calls') {
+            newElement.style.display = isFuncCallsVisible ? 'block' : 'none';
+        }
+
+        output.appendChild(newElement);
+        scrollToBottom();
+    }
+
+    function simpleMarkdownParse(text) {
+        // Parse suggestions (not standard markdown)
+        text = text.replace(/(?<!\\)\[\[([^\]]+)\]\]/g, (match, content) => {
+            content = content.trim();
+            return content
+                ? `<a class="suggestion-link" onclick="useSuggestion(this)"><span class="suggestion-icon">▶</span>${content}</a>`
+                : ''; // Handle empty suggestions by removing them
+        });
+
+        // Parse links
+        text = text.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" tabindex="-1" target="_blank">$1</a>');
+
+        // Parse inline code
+        text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+        // Parse headers (removing '#' symbols but keeping original spacing)
+        text = text.replace(/^(\s*)(#+)\s(.+)$/gm, (match, spacing, hashes, content) => {
+            const level = hashes.length;
+            return `${spacing}<h${level}>${content}</h${level}>`;
+        });
+
+        // Parse section separators
+        text = text.replace(/^---$/gm, '<hr class="section-separator">');
+
+        return text;
+    }
+
+    function updateDataStream(text) {
+        if (text.endsWith('...')) {
+            dataStream.textContent = text.slice(0, -3);
+            dataStream.classList.add('animate-dots');
+        } else {
+            dataStream.textContent = text;
+            dataStream.classList.remove('animate-dots');
+        }
+    }
+
+    function updateSubmitIndicator() {
+        const message = document.getElementById('message');
+        const submitIndicator = document.getElementById('submit-indicator');
+        if (message.value.split('\n').length > 1) {
+            submitIndicator.style.display = 'block';
+        } else {
+            submitIndicator.style.display = 'none';
+        }
+    }
+
+    function adjustTextareaHeight() {
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+        updateSubmitIndicator();
+    }
+
+    document.getElementById('message').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            if (this.value.split('\n').length > 1) {
+                if (e.ctrlKey) {
+                    e.preventDefault();
+                    submitForm();
+                }
+            } else {
+                e.preventDefault();
+                submitForm();
+            }
+        }
+    });
+
+    document.getElementById('message').addEventListener('input', adjustTextareaHeight);
+
+    document.getElementById('message').addEventListener('dblclick', function (e) {
+        if (this.value.split('\n').length > 1) {
+            submitForm();
+        }
+    });
+
+    function setInitialFocus() {
+        const messageTextarea = document.getElementById('message');
+        messageTextarea.focus();
+        messageTextarea.setSelectionRange(messageTextarea.value.length, messageTextarea.value.length);
+    }
+
+    // Toggle functionality for func-calls events
+    document.getElementById('toggle-func-calls').addEventListener('click', function () {
+        isFuncCallsVisible = !isFuncCallsVisible;
+        const funcCallsEvents = document.querySelectorAll('.event-line.func-calls');
+
+        funcCallsEvents.forEach(event => {
+            event.style.display = isFuncCallsVisible ? 'block' : 'none';
+        });
+
+        this.textContent = isFuncCallsVisible ? 'Hide Func Calls' : 'Show Func Calls';
+    });
+
+    // Function to set initial state of func calls events
+    function setInitialFuncCallsState() {
+        const funcCallsEvents = document.querySelectorAll('.event-line.func-calls');
+        funcCallsEvents.forEach(event => {
+            event.style.display = isFuncCallsVisible ? 'block' : 'none';
+        });
+    }
+
+    function useSuggestion(element) {
+        const suggestion = element.textContent.slice(1); // Remove the ▶ icon
+        document.getElementById('message').value = suggestion;
+        submitForm();
+    }
+
+    // Call setInitialFocus when the window has finished loading
+    window.addEventListener('load', () => {
+        setInitialFocus();
+        setInitialFuncCallsState();
+    });
+
+    // Initial scroll to bottom and update submit indicator
+    scrollToBottom();
+    updateSubmitIndicator();
+</script>
+</body>
+</html>
