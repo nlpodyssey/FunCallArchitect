@@ -299,6 +299,9 @@ func (o *Orchestrator) checkRequiredArgs(function parser.PlannedFuncCall, args m
 
 	for _, paramName := range functionSchema.Parameters.Required {
 		if err := o.checkRequiredArg(paramName, args); err != nil {
+			if IsFormattableError(err) {
+				return err
+			}
 			return &Error{
 				FuncName: function.Name,
 				ArgName:  paramName,
