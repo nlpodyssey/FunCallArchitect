@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -59,6 +60,32 @@ func (e *Error) Error() string {
 		return fmt.Sprintf("error in function '%s' for argument '%s': %v", e.FuncName, e.ArgName, e.Err)
 	}
 	return fmt.Sprintf("error in function '%s': %v", e.FuncName, e.Err)
+}
+
+type FormattableError struct {
+	FormatFunc FormatFunc
+}
+
+func NewFormattableError(formatFunc FormatFunc) *FormattableError {
+	return &FormattableError{FormatFunc: formatFunc}
+}
+
+func (e *FormattableError) Error() string {
+	result, err := e.FormatFunc()
+	if err != nil {
+		return fmt.Sprintf("FormattableError<FormatFunc error: %v>", err)
+	}
+	return result
+}
+
+func IsFormattableError(err error) bool {
+	return errors.Is(err, &FormattableError{})
+}
+
+func AsFormattableError(err error) (*FormattableError, bool) {
+	var f *FormattableError
+	ok := errors.As(err, &f)
+	return f, ok
 }
 
 // NewOrchestrator creates a new Orchestrator
@@ -145,8 +172,8 @@ func (o *Orchestrator) executeFunc(ctx context.Context, function parser.PlannedF
 	}
 
 	// Check for required arguments
-	if err := o.checkRequiredArgs(function, argsExecution); err != nil {
-		return nil, err
+	if err = o.checkRequiredArgs(function, argsExecution); err != nil {
+		return handleMissingRequiredArgsError(err, function, argsExecution)
 	}
 
 	processedArgs := createProcessedArgs(argsExecution)
@@ -208,6 +235,24 @@ func (o *Orchestrator) executeFunc(ctx context.Context, function parser.PlannedF
 	}
 }
 
+func handleMissingRequiredArgsError(err error, function parser.PlannedFuncCall, argsExecution map[string]Arg) (*ExecutedFuncCall, error) {
+	fe, ok := AsFormattableError(err)
+	if !ok {
+		return nil, err
+	}
+	return &ExecutedFuncCall{
+		Name:    function.Name,
+		Purpose: function.Purpose,
+		Args:    argsExecution,
+		Result: FuncResult{
+			Present:    false,
+			Value:      nil,
+			FormatFunc: fe.FormatFunc,
+			Metadata:   nil,
+		},
+	}, nil
+}
+
 // processArgs processes the arguments, executing nested functions if necessary
 func (o *Orchestrator) processArgs(ctx context.Context, function parser.PlannedFuncCall, progress progress.Stream) (map[string]Arg, error) {
 	args := make(map[string]Arg)
@@ -245,47 +290,41 @@ func createProcessedArgs(argsExecution map[string]Arg) map[string]any {
 }
 
 // checkRequiredArgs checks if all required arguments are present
-func (o *Orchestrator) checkRequiredArgs(function parser.PlannedFuncCall, processedArgs map[string]Arg) error {
-	// Get the function schema from the ToolSet
-	var functionSchema *tools.FuncDefinition
-	for _, f := range o.ToolSet.Functions {
-		if f.Name == function.Name {
-			functionSchema = &f
-			break
-		}
-	}
-
-	if functionSchema == nil {
+func (o *Orchestrator) checkRequiredArgs(function parser.PlannedFuncCall, args map[string]Arg) error {
+	functionSchema, ok := o.ToolSet.FindTool(function.Name)
+	if !ok {
 		return fmt.Errorf("function schema not found for %s", function.Name)
 	}
 
-	for _, requiredArg := range functionSchema.Parameters.Required {
-		if f, ok := GetFuncCall(processedArgs[requiredArg]); ok && !f.Result.Present {
-			output, err := f.Result.FormatFunc()
-			if err != nil {
-				return &Error{
-					FuncName: function.Name,
-					ArgName:  requiredArg,
-					Err:      fmt.Errorf("required argument %s is not present: %s", requiredArg, err),
-				}
-			}
+	for _, paramName := range functionSchema.Parameters.Required {
+		if err := o.checkRequiredArg(paramName, args); err != nil {
 			return &Error{
 				FuncName: function.Name,
-				ArgName:  requiredArg,
-				Err:      fmt.Errorf("required argument %s is not present: %s", requiredArg, output),
-			}
-		}
-
-		if _, ok := processedArgs[requiredArg]; !ok {
-			return &Error{
-				FuncName: function.Name,
-				ArgName:  requiredArg,
-				Err:      fmt.Errorf("required argument %s is missing", requiredArg),
+				ArgName:  paramName,
+				Err:      err,
 			}
 		}
 	}
 
 	return nil
+}
+
+func (o *Orchestrator) checkRequiredArg(paramName string, args map[string]Arg) error {
+	arg, ok := args[paramName]
+	if !ok {
+		return fmt.Errorf("missing argument for required parameter %s", paramName)
+	}
+
+	funcCall, ok := GetFuncCall(arg)
+	if !ok || funcCall.Result.Present {
+		return nil
+	}
+
+	if ff := funcCall.Result.FormatFunc; ff != nil {
+		return NewFormattableError(ff)
+	}
+
+	return fmt.Errorf("missing argument for required parameter %s: func call result is blank and has no FormatFunc", paramName)
 }
 
 // generateFingerprint creates a unique fingerprint for a function call
