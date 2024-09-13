@@ -65,6 +65,9 @@ type RequestHandlerConfig struct {
 	Tools                Tools
 	Timeout              time.Duration
 	EnableConcurrentExec bool
+
+	AlterUserRequest func(string) string
+	AlterResult      func(result *ProcessingResult) error
 }
 
 // RequestHandler represents a generic agent that can interact with a set of tools
@@ -98,6 +101,12 @@ func NewRequestHandler(config RequestHandlerConfig) (*RequestHandler, error) {
 func (a *RequestHandler) ProcessUserRequest(ctx context.Context, message string, progress progress.Stream) (*ProcessingResult, error) {
 	progress.Send("Processing user request...")
 
+	if a.config.AlterUserRequest != nil {
+		a.config.Logger.Printf("Original message: %s", message)
+		message = a.config.AlterUserRequest(message)
+		a.config.Logger.Printf("Altered message: %s", message)
+	}
+
 	funcCalls, err := a.generateFunctionCalls(ctx, message, progress)
 	if err != nil {
 		return nil, fmt.Errorf("error generating function calls: %w", err)
@@ -117,6 +126,12 @@ func (a *RequestHandler) ProcessUserRequest(ctx context.Context, message string,
 	exec, err := a.executeFunctionCalls(ctx, funcCalls, progress)
 	if err != nil {
 		return nil, fmt.Errorf("error executing functions: %w", err)
+	}
+
+	if a.config.AlterResult != nil {
+		if err := a.config.AlterResult(&ProcessingResult{Execution: exec}); err != nil {
+			return nil, fmt.Errorf("error on altering result: %w", err)
+		}
 	}
 
 	return &ProcessingResult{
