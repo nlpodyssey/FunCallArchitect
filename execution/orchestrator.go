@@ -79,7 +79,8 @@ func (e *FormattableError) Error() string {
 }
 
 func IsFormattableError(err error) bool {
-	return errors.Is(err, &FormattableError{})
+	var f *FormattableError
+	return errors.As(err, &f)
 }
 
 func AsFormattableError(err error) (*FormattableError, bool) {
