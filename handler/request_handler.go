@@ -157,7 +157,18 @@ func (a *RequestHandler) generateFunctionCalls(_ context.Context, message string
 		return nil, fmt.Errorf("failed to generate JSON schema: %w", err)
 	}
 
-	progress.Send("Thinking...")
+	/*
+		// Debugging
+		var prettyJSON bytes.Buffer
+		err = json.Indent(&prettyJSON, jsonSchema, "", "  ")
+		if err != nil {
+			fmt.Println("Failed to indent JSON:", err)
+			return nil, err
+		}
+		a.config.Logger.Printf("JSON schema:\n%s\n", prettyJSON.String())
+	*/
+
+	progress.Send("Generating function calls plan...")
 	funcCallsCompletion, err := a.config.LLMClient.Complete(messages, string(jsonSchema))
 	if err != nil {
 		return nil, fmt.Errorf("error calling LLM: %w", err)
