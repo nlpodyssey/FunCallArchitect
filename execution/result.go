@@ -94,7 +94,19 @@ func (r FuncResults) Format(separator string) (string, error) {
 		}
 		formatted = append(formatted, buf)
 	}
-	return strings.Join(formatted, separator), nil
+
+	// Remove duplicates
+	// TODO: Use a "Formatter" type to encapsulate this and the "separator" logic?
+	seen := make(map[string]struct{})
+	var unique []string
+	for _, s := range formatted {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			unique = append(unique, s)
+		}
+	}
+
+	return strings.Join(unique, separator), nil
 }
 
 // FuncResult represents the outcome of a function execution.
