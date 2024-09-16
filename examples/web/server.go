@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"embed"
+	"flag"
 	"fmt"
 	"html/template"
 	"io"
@@ -63,7 +64,18 @@ func loadConfig(filename string) (*Config, error) {
 }
 
 func main() {
-	config, err := loadConfig("config.yaml")
+	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
+	serverPort := flag.String("port", "8080", "Port for the server to listen on")
+	backendURL := flag.String("backend-url", "", "URL of the backend stream processing service")
+
+	flag.Parse()
+
+	if *backendURL == "" {
+		fmt.Println("Error: process-endpoint flag is required")
+		return
+	}
+
+	config, err := loadConfig(*configFile)
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
@@ -92,16 +104,18 @@ func main() {
 		w.Write(favicon)
 	})
 
-	http.HandleFunc("/process", handleProcess)
+	http.HandleFunc("/api/process", func(w http.ResponseWriter, r *http.Request) {
+		handleProcessRequest(w, r, *backendURL)
+	})
 
-	fmt.Println("Server is running on http://localhost:8080")
-	err = http.ListenAndServe(":8080", nil) // TODO: Update port
+	fmt.Printf("Server is running on http://localhost:%s\n", *serverPort)
+	err = http.ListenAndServe(":"+*serverPort, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func handleProcess(w http.ResponseWriter, r *http.Request) {
+func handleProcessRequest(w http.ResponseWriter, r *http.Request, processEndpoint string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -113,8 +127,7 @@ func handleProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := "http://localhost:8081/process" // TODO: Update URL
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(message))
+	req, err := http.NewRequest("POST", processEndpoint, bytes.NewBuffer(message))
 	if err != nil {
 		http.Error(w, "Error creating request", http.StatusInternalServerError)
 		return

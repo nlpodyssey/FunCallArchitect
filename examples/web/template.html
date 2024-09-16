@@ -325,7 +325,7 @@
         output.innerHTML += `<div class="event-line user-message"><span class="timestamp">[${timestamp}]</span> ${message}</div>`;
         scrollToBottom();
 
-        fetch('/stream-process', {
+        fetch('/api/process', {
             method: 'POST',
             body: message,
             headers: {
