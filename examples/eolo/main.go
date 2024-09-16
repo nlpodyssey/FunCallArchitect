@@ -117,7 +117,7 @@ func setupAgent(cfg config) (*agent.Agent, error) {
 		LLMClient:            completionClient,
 		Tools:                &Tools{},
 		Timeout:              60 * time.Second,
-		EnableConcurrentExec: false,
+		EnableConcurrentExec: true,
 	})
 }
 
