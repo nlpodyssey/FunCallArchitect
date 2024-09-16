@@ -21,13 +21,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/nlpodyssey/funcallarchitect/parser"
 	"github.com/nlpodyssey/funcallarchitect/progress"
 	"github.com/nlpodyssey/funcallarchitect/tools"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
 // FuncExecutor represents a function that can be executed, performs some operation and returns a FuncResult.
@@ -39,8 +41,7 @@ type FuncExecutor func(ctx context.Context, args map[string]interface{}, progres
 // Orchestrator holds the context for function execution, including memoization
 type Orchestrator struct {
 	Functions map[string]FuncExecutor
-	Memo      map[string]FuncResult
-	MemoLock  sync.RWMutex
+	inFlight  singleflight.Group
 	Logger    *log.Logger
 	Timeout   time.Duration
 
@@ -93,7 +94,6 @@ func AsFormattableError(err error) (*FormattableError, bool) {
 func NewOrchestrator(logger *log.Logger, timeout time.Duration, enableConcurrentExec bool, toolSet *tools.ToolSet) *Orchestrator {
 	return &Orchestrator{
 		Functions:            make(map[string]FuncExecutor),
-		Memo:                 make(map[string]FuncResult),
 		Logger:               logger,
 		Timeout:              timeout,
 		EnableConcurrentExec: enableConcurrentExec,
@@ -182,58 +182,51 @@ func (o *Orchestrator) executeFunc(ctx context.Context, function parser.PlannedF
 	// Generate a fingerprint for memoization
 	fingerprint := generateFingerprint(function.Name, processedArgs)
 
-	// Check memoization cache
-	o.MemoLock.RLock()
-	if result, ok := o.Memo[fingerprint]; ok {
-		o.MemoLock.RUnlock()
-		o.Logger.Printf("Using memoized result for function: %s", function.Name)
-		return &ExecutedFuncCall{
-			Name:    function.Name,
-			Purpose: function.Purpose,
-			Args:    argsExecution,
-			Result:  result,
-		}, nil
-	}
-	o.MemoLock.RUnlock()
+	// Use singleflight for both caching and concurrency control
+	result, err, _ := o.inFlight.Do(fingerprint, func() (interface{}, error) {
+		// Create a context with timeout
+		execCtx, cancel := context.WithTimeout(ctx, o.Timeout)
+		defer cancel()
 
-	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
-	defer cancel()
+		// Execute the function with timeout
+		resultChan := make(chan FuncResult, 1)
+		errChan := make(chan error, 1)
 
-	// Execute the function with timeout
-	resultChan := make(chan FuncResult, 1)
-	errChan := make(chan error, 1)
+		go func() {
+			result, err := executor(execCtx, processedArgs, progress)
+			if err != nil {
+				errChan <- &Error{FuncName: function.Name, Err: err}
+			} else {
+				resultChan <- result
+			}
+		}()
 
-	go func() {
-		result, err := executor(ctx, processedArgs, progress)
-		if err != nil {
-			errChan <- &Error{FuncName: function.Name, Err: err}
-		} else {
-			resultChan <- result
+		select {
+		case result := <-resultChan:
+			// Store the result in memoization cache
+			o.Logger.Printf("Function %s executed", function.Name)
+			return result, nil
+		case err := <-errChan:
+			o.Logger.Printf("Error executing function %s: %v", function.Name, err)
+			return nil, err
+		case <-execCtx.Done():
+			o.Logger.Printf("Function %s timed out", function.Name)
+			return nil, &Error{FuncName: function.Name, Err: fmt.Errorf("function execution timed out")}
 		}
-	}()
+	})
 
-	select {
-	case result := <-resultChan:
-		// Store the result in memoization cache
-		o.MemoLock.Lock()
-		o.Memo[fingerprint] = result
-		o.MemoLock.Unlock()
-		o.Logger.Printf("Function %s executed and result memoized", function.Name)
-
-		return &ExecutedFuncCall{
-			Name:    function.Name,
-			Purpose: function.Purpose,
-			Args:    argsExecution,
-			Result:  result,
-		}, nil
-	case err := <-errChan:
-		o.Logger.Printf("Error executing function %s: %v", function.Name, err)
+	if err != nil {
 		return nil, err
-	case <-ctx.Done():
-		o.Logger.Printf("Function %s timed out", function.Name)
-		return nil, &Error{FuncName: function.Name, Err: fmt.Errorf("function execution timed out")}
 	}
+
+	funcResult := result.(FuncResult)
+
+	return &ExecutedFuncCall{
+		Name:    function.Name,
+		Purpose: function.Purpose,
+		Args:    argsExecution,
+		Result:  funcResult,
+	}, nil
 }
 
 func handleMissingRequiredArgsError(err error, function parser.PlannedFuncCall, argsExecution map[string]Arg) (*ExecutedFuncCall, error) {
@@ -333,12 +326,23 @@ func (o *Orchestrator) checkRequiredArg(paramName string, args map[string]Arg) e
 
 // generateFingerprint creates a unique fingerprint for a function call
 func generateFingerprint(functionName string, args map[string]interface{}) string {
-	data, _ := json.Marshal(struct {
-		Name string
-		Args map[string]interface{}
-	}{
-		Name: functionName,
-		Args: args,
-	})
-	return fmt.Sprintf("%x", sha256.Sum256(data))
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var builder strings.Builder
+	builder.WriteString(functionName)
+	builder.WriteByte('|')
+
+	for i, k := range keys {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		v, _ := json.Marshal(args[k])
+		fmt.Fprintf(&builder, "%s:%s", k, v)
+	}
+
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(builder.String())))
 }
