@@ -47,7 +47,7 @@ func NewServer(a *agent.Agent) *Server {
 	return &Server{Agent: a}
 }
 
-func (a *Server) HandleRESTRequest(w http.ResponseWriter, r *http.Request) {
+func (a *Server) Process(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -65,7 +65,7 @@ func (a *Server) HandleRESTRequest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	data, err := postprocessExecutionForREST(a.Agent.Process(ctx, request.Message, &progress.NoOp{}))
+	data, err := postprocessProcessExecution(a.Agent.Process(ctx, request.Message, &progress.NoOp{}))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error processing request: %v", err), http.StatusInternalServerError)
 		return
@@ -81,7 +81,7 @@ func (a *Server) HandleRESTRequest(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func postprocessExecutionForREST(execution *agent.ProcessingResult, err error) (Data, error) {
+func postprocessProcessExecution(execution *agent.ProcessingResult, err error) (Data, error) {
 	if err != nil {
 		return Data{}, fmt.Errorf("error processing query: %w", err)
 	}
@@ -97,7 +97,7 @@ func postprocessExecutionForREST(execution *agent.ProcessingResult, err error) (
 	}, nil
 }
 
-func (a *Server) HandleUserRequest(w http.ResponseWriter, r *http.Request) {
+func (a *Server) StreamProcess(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -125,7 +125,7 @@ func (a *Server) HandleUserRequest(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(logCh)
 
-		data, err := postprocessExecution(a.Agent.Process(ctx, message, progressStream))
+		data, err := postprocessStreamProcessExecution(a.Agent.Process(ctx, message, progressStream))
 		if err != nil {
 			a.sendSSEEvent(w, flusher, "error", map[string]any{"message": err.Error()})
 			return
@@ -178,7 +178,8 @@ func (a *Server) sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, event
 }
 
 func (a *Server) Start(port int) error {
-	http.HandleFunc("/process", a.HandleUserRequest)
+	http.HandleFunc("/stream-process", a.StreamProcess)
+	http.HandleFunc("/process", a.Process)
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 
@@ -192,7 +193,7 @@ type Data struct {
 	FuncCalls string `json:"func_calls"`
 }
 
-func postprocessExecution(result *agent.ProcessingResult, err error) (Data, error) {
+func postprocessStreamProcessExecution(result *agent.ProcessingResult, err error) (Data, error) {
 	if err != nil {
 		return Data{}, fmt.Errorf("error processing query: %w", err)
 	}
