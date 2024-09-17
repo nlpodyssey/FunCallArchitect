@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/nlpodyssey/funcallarchitect/execution"
@@ -184,7 +185,6 @@ func (a *RequestHandler) evaluateFuncCallsConsistency(message string, funcCalls 
 	}
 
 	progress.Send("Evaluating function calls consistency...")
-	result := make([]parser.PlannedFuncCall, 0, len(funcCalls))
 
 	jsonSchema, err := json.Marshal(prompt.FuncCallsEvaluationResponseSchema)
 	if err != nil {
@@ -193,31 +193,62 @@ func (a *RequestHandler) evaluateFuncCallsConsistency(message string, funcCalls 
 
 	at := a.config.Tools.AvailableTools()
 
+	type result struct {
+		funcCall parser.PlannedFuncCall
+		err      error
+	}
+
+	resultChan := make(chan result, len(funcCalls)) // Buffered channel to prevent blocking
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4) // Limit to 4 concurrent operations
+
 	for _, function := range funcCalls {
-		usedToolsName := function.CollectAllNestedFuncCalls()
+		wg.Add(1)
+		go func(f parser.PlannedFuncCall) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		usedTools := make([]tools.FuncDefinition, 0, len(usedToolsName))
-		for _, toolName := range usedToolsName {
-			if tool, ok := at.FindTool(toolName); ok {
-				usedTools = append(usedTools, *tool)
-			} else {
-				return nil, fmt.Errorf("tool %s not found", toolName)
+			usedTools := make([]tools.FuncDefinition, 0)
+			for _, toolName := range f.CollectAllNestedFuncCalls() {
+				if tool, ok := at.FindTool(toolName); ok {
+					usedTools = append(usedTools, *tool)
+				} else {
+					resultChan <- result{err: fmt.Errorf("tool %s not found", toolName)}
+					return
+				}
 			}
-		}
 
-		usedToolSet := tools.ToolSet{
-			Functions:       usedTools,
-			TypeDefinitions: at.TypeDefinitions,
-		}
+			isConsistent, err := a.evaluateSingleFunctionCall(message, f, jsonSchema, &tools.ToolSet{
+				Functions:       usedTools,
+				TypeDefinitions: at.TypeDefinitions,
+			})
 
-		if isConsistent, err := a.evaluateSingleFunctionCall(message, function, jsonSchema, &usedToolSet); err != nil {
-			return nil, err
-		} else if isConsistent {
-			result = append(result, function)
+			if err != nil {
+				resultChan <- result{err: err}
+				return
+			}
+
+			if isConsistent {
+				resultChan <- result{funcCall: f}
+			}
+		}(function)
+	}
+
+	wg.Wait()
+	close(resultChan)
+
+	var consistent []parser.PlannedFuncCall
+	for r := range resultChan {
+		if r.err != nil {
+			return nil, r.err
+		}
+		if r.funcCall.Name != "" {
+			consistent = append(consistent, r.funcCall)
 		}
 	}
 
-	return result, nil
+	return consistent, nil
 }
 
 func (a *RequestHandler) evaluateSingleFunctionCall(message string, function parser.PlannedFuncCall, jsonSchema []byte, usedTools *tools.ToolSet) (bool, error) {
